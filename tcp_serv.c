@@ -278,6 +278,7 @@ int ipl2jpeg(IplImage *frame, unsigned char **outbuffer, long unsigned int *outl
     cinfo.in_color_space = JCS_RGB;
 
     jpeg_set_defaults(&cinfo);
+	jpeg_set_quality(&cinfo, 50, TRUE);
     jpeg_start_compress(&cinfo, TRUE);
     row_stride = frame->width * frame->nChannels;
 
@@ -302,8 +303,12 @@ void *VideoCaptureAndSend(void *ptr)
 
     /* Инициализация openCV */
     CvCapture* capture = cvCaptureFromCAM( CV_CAP_ANY );
+	cvSetCaptureProperty(capture,CV_CAP_PROP_FPS,10); 
+	cvSetCaptureProperty(capture,CV_CAP_PROP_FRAME_WIDTH,320); 
+	cvSetCaptureProperty(capture,CV_CAP_PROP_FRAME_HEIGHT,240); 
     double width = cvGetCaptureProperty(capture, CV_CAP_PROP_FRAME_WIDTH);
     double height = cvGetCaptureProperty(capture, CV_CAP_PROP_FRAME_HEIGHT);
+	IplImage* frame;
     printf("Разрешение камеры: %.0f x %.0f\n", width, height );
     if ( !capture )
     {
@@ -312,18 +317,19 @@ void *VideoCaptureAndSend(void *ptr)
     }
     CvFont font;
     cvInitFont( &font, CV_FONT_HERSHEY_COMPLEX,1.0, 1.0, 0, 1, CV_AA);
+    CvPoint pt = cvPoint( 50, 50 );
     do
     {
-        IplImage* frame = cvQueryFrame( capture );
+        frame = cvQueryFrame( capture );
         if ( !frame )
         {
             fprintf( stderr, "ERROR: frame is null...\n" );
-            getchar();
             break;
         }
-        CvPoint pt = cvPoint( 0, 0 );
-        cvPutText(frame, "OpenCV Step By Step", pt, &font, CV_RGB(150, 0, 150) );
+        cvPutText(frame, "OpenCV Step By Step", pt, &font, CV_RGB(255, 0, 0) );
         ipl2jpeg(frame, &outbuffer, &jpeg_len);
     }
-    while(send(socket,outbuffer,jpeg_len,0));
+    while(send(socket,outbuffer,jpeg_len,0)!=-1);
+	cvReleaseCapture(&capture);
+	cvReleaseImage(&frame);
 }

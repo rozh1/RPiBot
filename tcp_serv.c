@@ -18,6 +18,10 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <wiringPi.h>
+#include "cv.h"
+#include "highgui.h"
+#include <pthread.h>
+
 
 #define DEBUG_MODE true	/* Режим отладки */
 
@@ -48,7 +52,7 @@ int main()
  (клиента) */
     int sin_size;
     /* Инициализация библиотеки WiringPi */
-//    init_wiringpi();
+    init_wiringpi();
     /* Создаем сокет, ориентированный на соединение, для домена Интернет */
     if ((sd = socket (AF_INET, SOCK_STREAM, 0)) == -1)
     {
@@ -87,11 +91,25 @@ int main()
         {
 
             /* Мы находимся в дочернем порожденном процессе */
+            /* Инициализация openCV */
+            CvCapture* capture = cvCaptureFromCAM( CV_CAP_ANY );
+            double width = cvGetCaptureProperty(capture, CV_CAP_PROP_FRAME_WIDTH);
+            double height = cvGetCaptureProperty(capture, CV_CAP_PROP_FRAME_HEIGHT);
+			int iret1 = 0;
+            printf("Разрешение камеры: %.0f x %.0f\n", width, height );
+            if ( !capture )
+            {
+                fprintf( stderr, "ERROR: capture is NULL \n" );
+                return -1;
+            }
+			iret1 = pthread_create( &thread1, NULL, VideoCaptureAndSend, (void*) newsd);
+
             /* Потомок наследует все файловые дескрипторы родителя, а значит, и newsd */
             /* Теперь таких сокетов два - в каждом процессе по одному */
             /* Обрабатываем данные от клиента */
             process(newsd,&buf);
             printf ("сервер: клиент отключен");
+			pthread_join( thread1, NULL);
             close(newsd);	/* Закрываем сокет newsd	в порожденном процессе */
             exit (0);	/* Завершаем передачу данных из процесса потомка */
         }		/* Здесь заканчивается текст программы-потомка*/
@@ -104,15 +122,15 @@ int main()
 void process(int socket, char *buf)
 {
     int i=0;
-	int rec=0;
+    int rec=0;
     while(rec=recv(socket,buf,BUF_LENGTH, NULL))
     {
-		if (DEBUG_MODE)
-		{
-			printf("Получено:");
-			for (i=0; i<rec; i++) printf(" %d", buf[i]);
-			putchar('\n');
-		}
+        if (DEBUG_MODE)
+        {
+            printf("Получено:");
+            for (i=0; i<rec; i++) printf(" %d", buf[i]);
+            putchar('\n');
+        }
         process_motion(buf);
     }
 }
@@ -132,36 +150,36 @@ void init_wiringpi()
 
 void process_motion(char *buf)
 {
-	int com=0; 
+    int com=0;
     int i=0;
-	if (buf[4]==1) cam_position+=PWM_STEP;
+    if (buf[4]==1) cam_position+=PWM_STEP;
     if (buf[5]==1) cam_position-=PWM_STEP;
     if (cam_position<PWM_CAM_MIN) cam_position=PWM_CAM_MIN;
     if (cam_position>PWM_CAM_MAX) cam_position=PWM_CAM_MAX;
-//    pwmWrite (1,cam_position);
+    pwmWrite (1,cam_position);
     if (DEBUG_MODE) printf("Cam_position=%d\n",cam_position);
-	if (buf[2]==1) /* налево */
-	{
-		com=35;
-	}	
-	if (buf[3]==1) /* направо */
-	{
-		com=45;
-	}	
-	if (buf[0]==1) /* вперед */
-	{
-		com=15;
-		if(buf[2]==1) com=11; /* вперед и налево */
-		else if (buf[3]==1) com=19; /* вперед и направо */
-	}	
-	if (buf[1]==1) /* назад */
-	{
-		com=25;
-		if(buf[2]==1) com=21; /* назад и налево */
-		else if (buf[3]==1) com=29; /* назад и направо */
-	}
-	if (buf[6]==1) com=99; /* стоп */
-//	motor_com(com);
+    if (buf[2]==1) /* налево */
+    {
+        com=35;
+    }
+    if (buf[3]==1) /* направо */
+    {
+        com=45;
+    }
+    if (buf[0]==1) /* вперед */
+    {
+        com=15;
+        if(buf[2]==1) com=11; /* вперед и налево */
+        else if (buf[3]==1) com=19; /* вперед и направо */
+    }
+    if (buf[1]==1) /* назад */
+    {
+        com=25;
+        if(buf[2]==1) com=21; /* назад и налево */
+        else if (buf[3]==1) com=29; /* назад и направо */
+    }
+    if (buf[6]==1) com=99; /* стоп */
+    motor_com(com);
 }
 
 /*
@@ -181,7 +199,7 @@ void motor_com(int com)
 {
     switch(com)
     {
-	default:
+    default:
     case 0:
         digitalWrite(LEFT_MOTOR_1, 0);
         digitalWrite(LEFT_MOTOR_2, 0);
@@ -243,4 +261,64 @@ void motor_com(int com)
         digitalWrite(RIGHT_MOTOR_2, 1);
         break;
     }
+}
+
+int ipl2jpeg(IplImage *frame, unsigned char **outbuffer, long unsigned int *outlen)
+{
+    unsigned char *outdata = (uchar *) frame->imageData;
+    struct jpeg_compress_struct cinfo = {0};
+    struct jpeg_error_mgr jerr;
+    JSAMPROW row_ptr[1];
+    int row_stride;
+
+    *outbuffer = NULL;
+    *outlen = 0;
+
+    cinfo.err = jpeg_std_error(&jerr);
+    jpeg_create_compress(&cinfo);
+    jpeg_mem_dest(&cinfo, outbuffer, outlen);
+
+    cinfo.image_width = frame->width;
+    cinfo.image_height = frame->height;
+    cinfo.input_components = frame->nChannels;
+    cinfo.in_color_space = JCS_RGB;
+
+    jpeg_set_defaults(&cinfo);
+    jpeg_start_compress(&cinfo, TRUE);
+    row_stride = frame->width * frame->nChannels;
+
+    while (cinfo.next_scanline < cinfo.image_height)
+    {
+        row_ptr[0] = &outdata[cinfo.next_scanline * row_stride];
+        jpeg_write_scanlines(&cinfo, row_ptr, 1);
+    }
+
+    jpeg_finish_compress(&cinfo);
+    jpeg_destroy_compress(&cinfo);
+
+    return 0;
+
+}
+
+void *VideoCaptureAndSend(void *ptr)
+{
+	long unsigned int jpeg_len;
+	unsigned char *outbuffer
+	int socket = (int) ptr;
+	CvFont font;
+    cvInitFont( &font, CV_FONT_HERSHEY_COMPLEX,1.0, 1.0, 0, 1, CV_AA);
+    do
+    {
+	    IplImage* frame = cvQueryFrame( capture );
+    if ( !frame )
+    {
+        fprintf( stderr, "ERROR: frame is null...\n" );
+        getchar();
+        break;
+    }
+        CvPoint pt = cvPoint( 0, 0 );
+        cvPutText(frame, "OpenCV Step By Step", pt, &font, CV_RGB(150, 0, 150) );
+		ipl2jpeg(frame, &outbuffer, &jpeg_len)
+	}
+    while(send(socket,outbuffer,jpeg_len,0) != SOCKET_ERROR);
 }

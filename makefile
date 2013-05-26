@@ -1,14 +1,20 @@
 CC		:= gcc
-CFLAGS		:= -I/usr/local/include/opencv -L/usr/local/lib
-OBJECTS		:= 
+CFLAGS		:= -c -Wall
 LIBRARIES	:= -lopencv_core -lopencv_imgproc -lopencv_highgui -lwiringPi -lpthread
+LDFLAGS		:= -I/usr/local/include/opencv -L/usr/local/lib  -I./
+SOURCES=tpc_serv.c motion.c image_processing.c
+OBJECTS=$(SOURCES:.c=.o)
+EXECUTABLE=tpc_serv
 
-.PHONY: all clean
+.PHONY: clean all 
 
-all: test
+all: $(SOURCES) $(EXECUTABLE)
 
-test: 
-	$(CC) $(CFLAGS) -o tcp_serv tcp_serv.c $(LIBRARIES)
+$(EXECUTABLE): $(OBJECTS)
+	$(CC) $(LDFLAGS) $(LIBRARIES) $(OBJECTS) -o $@ 
+
+.c.o:
+	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@
         
 clean:
 	rm -f *.o
